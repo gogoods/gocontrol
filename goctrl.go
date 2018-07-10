@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 
 	xfile "github.com/gogoods/x/file"
@@ -16,6 +15,9 @@ Usage:
 	
 	`
 	SrcFile = "control.tmpl"
+	DstFile = "control"
+
+	OldContent = "<appname>"
 )
 
 func main() {
@@ -23,6 +25,18 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Println(Usage)
 	} else {
-		log.Println(xfile.Copy(SrcFile, "./control"))
+		if err := xfile.Copy(SrcFile, DstFile); err == nil {
+			err = xfile.ReplaceContent(DstFile, OldContent, os.Args[1])
+
+			if err == nil {
+				fmt.Println("Done!")
+			} else {
+				fmt.Println("Failed:", err.Error())
+			}
+
+		} else {
+			fmt.Println("Failed:", err.Error())
+		}
+
 	}
 }
