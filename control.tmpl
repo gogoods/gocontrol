@@ -1,0 +1,217 @@
+#!/bin/bash
+
+WORKSPACE=$(cd $(dirname $0)/; pwd)
+cd $WORKSPACE
+
+mkdir -p var
+
+path=src/main.go
+appname=demo
+app=bin/$appname
+conf=cfg.yml
+pidfile=var/app.pid
+logfile=var/app.log
+
+function check_pid() {
+    if [ -f $pidfile ];then
+        pid=`cat $pidfile`
+        if [ -n $pid ]; then
+            running=`ps -p $pid|grep -v "PID TTY" |wc -l`
+            return $running
+        fi
+    fi
+    return 0
+}
+
+function start() {
+    check_pid
+    running=$?
+    if [ $running -gt 0 ];then
+        echo -n "$app now is running already, pid="
+        cat $pidfile
+        return 1
+    fi
+
+    if ! [ -f $conf ];then
+        echo "Config file $conf doesn't exist, creating one."
+        cp cfg.yml $conf
+    fi
+    nohup ./$app -c $conf &> $logfile &
+    echo $! > $pidfile
+    echo "$app started..., pid=$!"
+
+    check_crontab
+}
+
+function stop() {
+    pid=`cat $pidfile`
+    kill $pid
+    echo "$app stoped..."
+}
+
+function restart() {
+    stop
+    sleep 1
+    start
+}
+
+function status() {
+    check_pid
+    running=$?
+    if [ $running -gt 0 ];then
+        echo started
+    else
+        echo stoped
+    fi
+}
+
+function tailf() {
+    tail -f $logfile
+}
+
+function build() {
+    go build -o $app $path
+    if [ $? -ne 0 ]; then
+        exit $?
+    fi
+    
+    ./$app -v
+}
+
+function pack() {
+    build
+    git log -1 --pretty=%h > gitversion
+    version=`./$app -v`
+    file_list="public control cfg.yml $app"
+    echo "...tar $app-$version.tar.gz <= $file_list"
+    tar zcf $app-$version.tar.gz gitversion $file_list
+}
+
+function packbin() {
+    build
+   # git log -1 --pretty=%h > gitversion
+    version=`./$app -v`
+    tar zcvf $app-bin-$version.tar.gz $app gitversion
+}
+
+function release() {
+    go build -o ../release/$appname/$app $path
+    #version=`./$app -v`
+    file_list="control cfg.yml"
+    #echo "...tar $app-$version.tar.gz <= $file_list"
+
+    cp $file_list ../release/$appname
+    #tar zcf $app-$version.tar.gz  $file_list
+    #md5sum $app-$version.tar.gz > $app-$version.tar.gz.md5
+}
+
+function debug() {
+    build
+    restart
+    tailf
+}
+
+function reload() {
+    port=`cat cfg.yml | grep listen| awk -F ':' '{print $3}' | sed -e "s/\r//g"` 
+    curl "http://127.0.0.1:${port}/config/reload"
+}
+
+function help() {
+    echo "$0 build|pack|start|stop|restart|status|tail"
+}
+
+
+function cut() {
+    cp $logfile $WORKSPACE/var/app.log_`date -d yesterday "+%Y%m%d"`
+    >$logfile
+}
+
+function check_crontab() {
+    cat /var/spool/cron/root | egrep -w "$WORKSPACE/control cut" 2>/dev/null
+    if [ $? -ne 0 ];then
+        echo "0 0 * * * $WORKSPACE/control cut">>/var/spool/cron/root
+        sys=$(uname -r |awk -F. '{print $4}')
+
+        if [ "$sys" == "el7" ]
+        then
+	        systemctl restart crond.service
+        else
+	        /etc/init.d/crond restart
+        fi
+
+        echo "add clear log crontab work success"
+    fi
+}
+
+function startMonitor() {
+    monitor_script='#!/bin/bash\n
+WORKSPACE=$(cd $(dirname $0)/; pwd)\n
+cd $WORKSPACE\n
+app={appname}\n
+log=var/app.log\n
+\n
+while true\n
+do\n
+    monitor_log=monitor.log\n
+    time=`date "+%Y%m%d%H%M%S"`\n
+    status=`curl 127.0.0.1:{port}/ok`\n
+    #HAS=`ps -ef| grep "$app -c cfg.yml" | grep -v grep | wc -l`\n
+    #echo $HAS\n
+    if [ "$status" != "ok" ];then\n
+    #if [ $HAS -lt 1 ];then\n
+        echo "`date "+%Y-%m-%d %H:%M:%S"` the service is down,restart $app" >>$monitor_log\n
+        cp $log $WORKSPACE/var/app.log_err_"$time"\n
+        ./control restart\n
+    else\n
+        echo "`date "+%Y-%m-%d %H:%M:%S"` ok" >>$monitor_log\n
+    fi\n
+\n
+    sleep 30\n
+done'
+    echo -e $monitor_script > monitor.sh
+    sed -i  "s/{appname}/$appname/g" monitor.sh 
+    port=`cat cfg.yml | grep listen| awk -F ':' '{print $3}' | sed -e "s/\r//g"`
+    sed -i  "s/{port}/$port/g" monitor.sh 
+    chmod +x monitor.sh
+    nohup /bin/bash $WORKSPACE/monitor.sh &> /dev/null &
+    cat monitor.sh
+}
+
+function killMonitor() {
+    ps -ef|grep "$WORKSPACE/monitor.sh"|grep -v grep|awk '{print $2}'|xargs kill -9
+}
+
+
+if [ "$1" == "" ]; then
+    help
+elif [ "$1" == "stop" ];then
+    stop
+elif [ "$1" == "start" ];then
+    start
+elif [ "$1" == "restart" ];then
+    restart
+elif [ "$1" == "status" ];then
+    status
+elif [ "$1" == "tail" ];then
+    tailf
+elif [ "$1" == "build" ];then
+    build
+elif [ "$1" == "pack" ];then
+    pack
+elif [ "$1" == "release" ];then
+    release
+elif [ "$1" == "packbin" ];then
+    packbin
+elif [ "$1" == "debug" ];then
+    debug
+elif [ "$1" == "reload" ];then
+    reload
+elif [ "$1" == "cut" ];then
+    cut
+elif [ "$1" == "monitor" ];then
+    startMonitor
+elif [ "$1" == "monitorkill" ];then
+    killMonitor
+else
+    help
+fi
