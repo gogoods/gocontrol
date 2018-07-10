@@ -15,8 +15,9 @@ An usefull script for controling golang program written by shell, also can be us
 
 ### Usage
 
+```
 goctrl <appname>
-
+```
 
 > Eureka!!!
 
