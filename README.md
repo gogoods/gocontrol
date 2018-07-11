@@ -16,6 +16,8 @@ An usefull script for controling golang program written by shell, also can be us
 ### Usage
 
 ```
+go install github.com/gogoods/goctrl
+
 goctrl <appname>
 ```
 
